@@ -77,6 +77,36 @@ class CustomSpeedScroll implements ScrollAcceleration {
   reset(): void {}
 }
 
+function formatSessionTranscript(
+  sessionData: { id: string; title: string; time: { created: number; updated: number } },
+  sessionMessages: Array<{ id: string; role: string }>,
+  sync: ReturnType<typeof useSync>,
+): string {
+  let transcript = `# ${sessionData.title}\n\n`
+  transcript += `**Session ID:** ${sessionData.id}\n`
+  transcript += `**Created:** ${new Date(sessionData.time.created).toLocaleString()}\n`
+  transcript += `**Updated:** ${new Date(sessionData.time.updated).toLocaleString()}\n\n`
+  transcript += `---\n\n`
+
+  for (const msg of sessionMessages) {
+    const parts = sync.data.part[msg.id] ?? []
+    const role = msg.role === "user" ? "User" : "Assistant"
+    transcript += `## ${role}\n\n`
+
+    for (const part of parts) {
+      if (part.type === "text" && !part.synthetic) {
+        transcript += `${part.text}\n\n`
+      } else if (part.type === "tool") {
+        transcript += `\`\`\`\nTool: ${part.tool}\n\`\`\`\n\n`
+      }
+    }
+
+    transcript += `---\n\n`
+  }
+
+  return transcript
+}
+
 const context = createContext<{
   width: number
   conceal: () => boolean
@@ -638,31 +668,7 @@ export function Session() {
       category: "Session",
       onSelect: async (dialog) => {
         try {
-          // Format session transcript as markdown
-          const sessionData = session()
-          const sessionMessages = messages()
-
-          let transcript = `# ${sessionData.title}\n\n`
-          transcript += `**Session ID:** ${sessionData.id}\n`
-          transcript += `**Created:** ${new Date(sessionData.time.created).toLocaleString()}\n`
-          transcript += `**Updated:** ${new Date(sessionData.time.updated).toLocaleString()}\n\n`
-          transcript += `---\n\n`
-
-          for (const msg of sessionMessages) {
-            const parts = sync.data.part[msg.id] ?? []
-            const role = msg.role === "user" ? "User" : "Assistant"
-            transcript += `## ${role}\n\n`
-
-            for (const part of parts) {
-              if (part.type === "text" && !part.synthetic) {
-                transcript += `${part.text}\n\n`
-              } else if (part.type === "tool") {
-                transcript += `\`\`\`\nTool: ${part.tool}\n\`\`\`\n\n`
-              }
-            }
-
-            transcript += `---\n\n`
-          }
+          const transcript = formatSessionTranscript(session(), messages(), sync)
 
           // Copy to clipboard
           await Clipboard.copy(transcript)
@@ -674,63 +680,31 @@ export function Session() {
       },
     },
     {
-      title: "Export session transcript to file",
+      title: "Open session transcript in editor",
       value: "session.export",
       keybind: "session_export",
       category: "Session",
       onSelect: async (dialog) => {
         try {
-          // Format session transcript as markdown
           const sessionData = session()
-          const sessionMessages = messages()
+          const transcript = formatSessionTranscript(sessionData, messages(), sync)
 
-          let transcript = `# ${sessionData.title}\n\n`
-          transcript += `**Session ID:** ${sessionData.id}\n`
-          transcript += `**Created:** ${new Date(sessionData.time.created).toLocaleString()}\n`
-          transcript += `**Updated:** ${new Date(sessionData.time.updated).toLocaleString()}\n\n`
-          transcript += `---\n\n`
-
-          for (const msg of sessionMessages) {
-            const parts = sync.data.part[msg.id] ?? []
-            const role = msg.role === "user" ? "User" : "Assistant"
-            transcript += `## ${role}\n\n`
-
-            for (const part of parts) {
-              if (part.type === "text" && !part.synthetic) {
-                transcript += `${part.text}\n\n`
-              } else if (part.type === "tool") {
-                transcript += `\`\`\`\nTool: ${part.tool}\n\`\`\`\n\n`
-              }
-            }
-
-            transcript += `---\n\n`
-          }
-
-          // Prompt for optional filename
-          const customFilename = await DialogPrompt.show(dialog, "Export filename", {
-            value: `session-${sessionData.id.slice(0, 8)}.md`,
+          // Open in editor with temp file in cwd. Temp file is named with session ID for identification.
+          // Content is intentionally ignored - we don't persist changes back to disk since this is
+          // for viewing/copying only. Users can manually save in their editor if they want to keep a copy.
+          const result = await Editor.open({
+            value: transcript,
+            renderer,
+            workdir: process.cwd(),
+            sessionID: sessionData.id,
           })
 
-          // Cancel if user pressed escape
-          if (customFilename === null) return
-
-          // Save to file in current working directory
-          const exportDir = process.cwd()
-          const filename = customFilename.trim()
-          const filepath = path.join(exportDir, filename)
-
-          await Bun.write(filepath, transcript)
-
-          // Open with EDITOR if available
-          const result = await Editor.open({ value: transcript, renderer })
-          if (result !== undefined) {
-            // User edited the file, save the changes
-            await Bun.write(filepath, result)
+          if (!result.success) {
+            toast.show({ message: result.error, variant: "error" })
           }
-
-          toast.show({ message: `Session exported to ${filename}`, variant: "success" })
         } catch (error) {
-          toast.show({ message: "Failed to export session", variant: "error" })
+          console.error("Failed to open session in editor:", error)
+          toast.show({ message: "Failed to open session in editor", variant: "error" })
         }
         dialog.clear()
       },

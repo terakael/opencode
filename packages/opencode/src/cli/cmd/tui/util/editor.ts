@@ -12,15 +12,36 @@ const CURSOR_HOME = "\x1b[H" // CSI Cursor Position - moves cursor to home (1,1)
 const CLEAR_AND_RESET = CLEAR_SCREEN + CURSOR_HOME
 
 export namespace Editor {
-  export async function open(opts: { value: string; renderer: CliRenderer }): Promise<string | undefined> {
+  export type Result = { success: true; content: string | undefined } | { success: false; error: string }
+
+  export async function open(opts: {
+    value: string
+    renderer: CliRenderer
+    workdir?: string
+    sessionID?: string
+  }): Promise<Result> {
     const editor = process.env["VISUAL"] || process.env["EDITOR"]
-    if (!editor) return
+    if (!editor) {
+      return {
+        success: false,
+        error: "No editor configured. Set EDITOR or VISUAL environment variable",
+      }
+    }
 
     // Editor requires a TTY to work properly
-    if (!process.stdin.isTTY) return
+    if (!process.stdin.isTTY) {
+      return {
+        success: false,
+        error: "Cannot open editor: no TTY available",
+      }
+    }
 
-    const filepath = join(tmpdir(), `${Date.now()}.md`)
-    await using _ = defer(async () => rm(filepath, { force: true }))
+    const dir = opts.workdir ?? tmpdir()
+    const filename = opts.sessionID ? `session-${opts.sessionID.slice(0, 8)}.md` : `${Date.now()}.md`
+    const filepath = join(dir, filename)
+    await using _ = defer(async () => {
+      await rm(filepath, { force: true })
+    })
 
     await Bun.write(filepath, opts.value)
 
@@ -64,10 +85,18 @@ export namespace Editor {
     opts.renderer.requestRender()
 
     // Early return on spawn error
-    if (result.error) return
+    if (result.error) {
+      return {
+        success: false,
+        error: "Failed to spawn editor process",
+      }
+    }
 
     // On success: read and return edited content
     const content = await Bun.file(filepath).text()
-    return content || undefined
+    return {
+      success: true,
+      content: content || undefined,
+    }
   }
 }

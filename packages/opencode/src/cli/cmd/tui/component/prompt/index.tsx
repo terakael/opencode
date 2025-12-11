@@ -196,10 +196,16 @@ export function Prompt(props: PromptProps) {
           const nonTextParts = store.prompt.parts.filter((p) => p.type !== "text")
 
           const value = trigger === "prompt" ? "" : text
-          const content = await Editor.open({ value, renderer })
-          if (!content) return
+          const result = await Editor.open({ value, renderer })
 
-          input.setText(content, { history: false })
+          if (!result.success) {
+            toast.show({ message: result.error, variant: "error" })
+            return
+          }
+
+          if (!result.content) return
+
+          input.setText(result.content, { history: false })
 
           // Update positions for nonTextParts based on their location in new content
           // Filter out parts whose virtual text was deleted
@@ -216,7 +222,7 @@ export function Prompt(props: PromptProps) {
 
               if (!virtualText) return part
 
-              const newStart = content.indexOf(virtualText)
+              const newStart = result.content!.indexOf(virtualText)
               // if the virtual text is deleted, remove the part
               if (newStart === -1) return null
 
@@ -252,13 +258,13 @@ export function Prompt(props: PromptProps) {
             .filter((part) => part !== null)
 
           setStore("prompt", {
-            input: content,
+            input: result.content,
             // keep only the non-text parts because the text parts were
             // already expanded inline
             parts: updatedNonTextParts,
           })
           restoreExtmarksFromParts(updatedNonTextParts)
-          input.cursorOffset = Bun.stringWidth(content)
+          input.cursorOffset = Bun.stringWidth(result.content)
         },
       },
     ]
